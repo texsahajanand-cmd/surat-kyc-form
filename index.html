@@ -766,17 +766,22 @@
 
                     <div class="signature-container">
                         <div class="upload-label required"><i class="fas fa-pen-fancy"></i> Digital Signature</div>
-                        <p style="font-size: 12px; color: #666; margin-bottom: 8px;">Draw your signature below using mouse or touch</p>
+                        <p style="font-size: 12px; color: #666; margin-bottom: 8px;">Draw your signature below using mouse or touch, then click "Add Signature"</p>
                         <canvas id="signaturePad" class="signature-pad" width="400" height="150"></canvas>
-                        <div class="signature-buttons">
+                        <div class="signature-buttons" style="display: flex; gap: 10px; align-items: center;">
                             <button type="button" class="clear-btn" onclick="clearSignature()">
                                 <i class="fas fa-redo"></i> Clear Signature
                             </button>
+                            <button type="button" class="submit-btn" id="addSignatureBtn" style="min-width: auto; padding: 10px 20px;" onclick="confirmSignature()">
+                                <i class="fas fa-check"></i> Add Signature
+                            </button>
                         </div>
+                        <div id="signatureStatus" style="margin-top: 8px; font-size: 13px; font-weight: 600;"></div>
                     </div>
                 </div>
 
                 <!-- 5. REFERENCES -->
+
                 <div class="section">
                     <div class="section-title">
                         <i class="fas fa-handshake"></i> BUSINESS REFERENCES (Any two references)
@@ -985,6 +990,23 @@
             ctx.fillStyle = 'white';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             hasSignature = false;
+            const statusEl = document.getElementById('signatureStatus');
+            if (statusEl) statusEl.innerHTML = '';
+        }
+
+        // "Add Signature" button - confirms the drawn signature
+        function confirmSignature() {
+            const statusEl = document.getElementById('signatureStatus');
+
+            if (!hasSignature) {
+                statusEl.innerHTML = '<i class="fas fa-exclamation-circle" style="color:#f44336;"></i> Please draw your signature first before clicking Add.';
+                statusEl.style.color = '#f44336';
+                return;
+            }
+
+            statusEl.innerHTML = '<i class="fas fa-check-circle" style="color:#4caf50;"></i> Signature added!';
+            statusEl.style.color = '#4caf50';
+            document.getElementById('errorMsg').style.display = 'none';
         }
 
         // File upload handling
