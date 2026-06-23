@@ -908,6 +908,7 @@
         const canvas = document.getElementById('signaturePad');
         const ctx = canvas.getContext('2d');
         let isDrawing = false;
+        let hasSignature = false;
         let lastX = 0;
         let lastY = 0;
 
@@ -917,6 +918,7 @@
 
         canvas.addEventListener('mousedown', (e) => {
             isDrawing = true;
+            hasSignature = true;
             const rect = canvas.getBoundingClientRect();
             lastX = e.clientX - rect.left;
             lastY = e.clientY - rect.top;
@@ -948,6 +950,7 @@
         // Touch support for mobile
         canvas.addEventListener('touchstart', (e) => {
             isDrawing = true;
+            hasSignature = true;
             const rect = canvas.getBoundingClientRect();
             const touch = e.touches[0];
             lastX = touch.clientX - rect.left;
@@ -981,6 +984,7 @@
         function clearSignature() {
             ctx.fillStyle = 'white';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
+            hasSignature = false;
         }
 
         // File upload handling
@@ -1030,9 +1034,10 @@
 
             // Check if signature is drawn
             const imageData = canvas.toDataURL('image/png');
-            if (imageData.includes('AAAAA')) {
+            if (!hasSignature) {
                 document.getElementById('errorMsg').innerHTML = '<i class="fas fa-exclamation-circle"></i> Please draw your signature before submitting';
                 document.getElementById('errorMsg').style.display = 'block';
+                document.getElementById('errorMsg').scrollIntoView({ behavior: 'smooth', block: 'center' });
                 return;
             }
 
