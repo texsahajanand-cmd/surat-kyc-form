@@ -1172,21 +1172,54 @@
             }
         });
 
+        // Converts a raw ArrayBuffer to a base64 string without using FileReader
+        // (FileReader.readAsDataURL has been seen to fail on some Android/mobile
+        // browsers for files coming from the gallery's content:// storage).
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            const chunkSize = 0x8000; // process in chunks to avoid call-stack limits on large files
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+                const chunk = bytes.subarray(i, i + chunkSize);
+                binary += String.fromCharCode.apply(null, chunk);
+            }
+            return btoa(binary);
+        }
+
+        // Reads a file as a data URL using arrayBuffer() instead of FileReader,
+        // which is more reliable on mobile browsers.
+        async function fileToDataUrlViaArrayBuffer(file) {
+            const buffer = await file.arrayBuffer();
+            const base64 = arrayBufferToBase64(buffer);
+            const mimeType = file.type || 'application/octet-stream';
+            return 'data:' + mimeType + ';base64,' + base64;
+        }
+
         function fileToBase64(file) {
-            return new Promise((resolve, reject) => {
-                // Only compress actual images; pass through other file types as-is
+            return new Promise(async (resolve, reject) => {
+                // Non-image files: just read and send as-is
                 if (!file.type.startsWith('image/')) {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(reader.result);
-                    reader.onerror = () => reject(new Error('Could not read file "' + file.name + '" (it may be corrupted).'));
-                    reader.readAsDataURL(file);
+                    try {
+                        const dataUrl = await fileToDataUrlViaArrayBuffer(file);
+                        resolve(dataUrl);
+                    } catch (err) {
+                        reject(new Error('Could not read file "' + file.name + '": ' + (err && err.message ? err.message : err)));
+                    }
                     return;
                 }
 
-                const reader = new FileReader();
+                // For images: get the original data first via arrayBuffer (reliable on mobile),
+                // then try to compress it. If compression fails for any reason, send the
+                // original (uncompressed) image instead of failing the whole submission.
+                let originalDataUrl;
+                try {
+                    originalDataUrl = await fileToDataUrlViaArrayBuffer(file);
+                } catch (err) {
+                    reject(new Error('Could not read image "' + file.name + '": ' + (err && err.message ? err.message : err)));
+                    return;
+                }
 
-                reader.onload = (event) => {
-                    const originalDataUrl = event.target.result;
+                try {
                     const img = new Image();
 
                     img.onload = () => {
@@ -1212,29 +1245,27 @@
                             ctx2d.fillRect(0, 0, width, height);
                             ctx2d.drawImage(img, 0, 0, width, height);
 
-                            // JPEG at 75% quality keeps file size small while staying readable
                             const compressedDataUrl = canvasEl.toDataURL('image/jpeg', 0.75);
                             resolve(compressedDataUrl);
                         } catch (canvasErr) {
-                            // Compression failed for some reason - fall back to the original file untouched
                             console.warn('Compression failed, using original file:', canvasErr);
                             resolve(originalDataUrl);
                         }
                     };
 
                     img.onerror = () => {
-                        // Browser couldn't decode this as a displayable image (e.g. HEIC photo
-                        // from an iPhone, or an unusual format). Fall back to sending the
-                        // original file as-is instead of failing the whole submission.
-                        console.warn('Image decode failed for "' + file.name + '" (type: ' + file.type + '), sending original file uncompressed.');
+                        // Couldn't decode for compression (unusual format, etc).
+                        // Send the original file untouched instead of failing.
+                        console.warn('Image decode failed for "' + file.name + '", sending original uncompressed.');
                         resolve(originalDataUrl);
                     };
 
                     img.src = originalDataUrl;
-                };
-
-                reader.onerror = () => reject(new Error('Could not read image file "' + file.name + '" (it may be corrupted or in an unsupported format).'));
-                reader.readAsDataURL(file);
+                } catch (err) {
+                    // Any unexpected error during compression attempt - still send original
+                    console.warn('Unexpected compression error, using original file:', err);
+                    resolve(originalDataUrl);
+                }
             });
         }
 
