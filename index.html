@@ -1105,12 +1105,24 @@
 
                 // Convert files to base64
                 const fileFields = ['photoUpload', 'aadharFrontUpload', 'aadharBackUpload', 'chequeUpload'];
+                const failedFiles = [];
                 for (const field of fileFields) {
                     const fileInput = document.querySelector(`input[name="${field}"]`);
                     if (fileInput.files[0]) {
                         const base64 = await fileToBase64(fileInput.files[0]);
-                        data[field] = base64;
+                        if (base64) {
+                            data[field] = base64;
+                        } else {
+                            data[field] = '';
+                            failedFiles.push(fileInput.files[0].name);
+                        }
                     }
+                }
+
+                if (failedFiles.length > 0) {
+                    document.getElementById('errorMsg').innerHTML =
+                        '<i class="fas fa-exclamation-triangle"></i> Could not read: ' + failedFiles.join(', ') +
+                        '. Please try selecting these again (or take a fresh photo). Submitting the rest now...';
                 }
 
                 const payloadString = JSON.stringify(data);
@@ -1172,9 +1184,7 @@
             }
         });
 
-        // Converts a raw ArrayBuffer to a base64 string without using FileReader
-        // (FileReader.readAsDataURL has been seen to fail on some Android/mobile
-        // browsers for files coming from the gallery's content:// storage).
+        // Converts a raw ArrayBuffer to a base64 string.
         function arrayBufferToBase64(buffer) {
             let binary = '';
             const bytes = new Uint8Array(buffer);
@@ -1186,45 +1196,52 @@
             return btoa(binary);
         }
 
-        // Reads a file as a data URL using arrayBuffer() instead of FileReader,
-        // which is more reliable on mobile browsers.
-        async function fileToDataUrlViaArrayBuffer(file) {
-            const buffer = await file.arrayBuffer();
-            const base64 = arrayBufferToBase64(buffer);
+        // Tries multiple methods to read a file as a base64 data URL.
+        // Never throws - returns null if every method fails (caller skips this file then).
+        async function readFileAsDataUrl(file) {
             const mimeType = file.type || 'application/octet-stream';
-            return 'data:' + mimeType + ';base64,' + base64;
+
+            // Method 1: arrayBuffer (most reliable on modern mobile browsers)
+            try {
+                const buffer = await file.arrayBuffer();
+                const base64 = arrayBufferToBase64(buffer);
+                return 'data:' + mimeType + ';base64,' + base64;
+            } catch (err) {
+                console.warn('arrayBuffer method failed for ' + file.name + ':', err);
+            }
+
+            // Method 2: FileReader (fallback for older/different browsers)
+            try {
+                const result = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+                    reader.readAsDataURL(file);
+                });
+                return result;
+            } catch (err) {
+                console.warn('FileReader method failed for ' + file.name + ':', err);
+            }
+
+            // Both methods failed
+            return null;
         }
 
-        function fileToBase64(file) {
-            return new Promise(async (resolve, reject) => {
-                // Non-image files: just read and send as-is
-                if (!file.type.startsWith('image/')) {
-                    try {
-                        const dataUrl = await fileToDataUrlViaArrayBuffer(file);
-                        resolve(dataUrl);
-                    } catch (err) {
-                        reject(new Error('Could not read file "' + file.name + '": ' + (err && err.message ? err.message : err)));
-                    }
-                    return;
-                }
-
-                // For images: get the original data first via arrayBuffer (reliable on mobile),
-                // then try to compress it. If compression fails for any reason, send the
-                // original (uncompressed) image instead of failing the whole submission.
-                let originalDataUrl;
-                try {
-                    originalDataUrl = await fileToDataUrlViaArrayBuffer(file);
-                } catch (err) {
-                    reject(new Error('Could not read image "' + file.name + '": ' + (err && err.message ? err.message : err)));
-                    return;
-                }
-
+        // Attempts to compress an image data URL. If anything goes wrong, returns
+        // the original data URL untouched. Never throws, never rejects.
+        function compressImageDataUrl(dataUrl) {
+            return new Promise((resolve) => {
                 try {
                     const img = new Image();
+                    const timeoutId = setTimeout(() => {
+                        // If decoding takes too long or silently never fires, don't hang forever
+                        resolve(dataUrl);
+                    }, 8000);
 
                     img.onload = () => {
+                        clearTimeout(timeoutId);
                         try {
-                            const MAX_DIMENSION = 1200; // max width or height in pixels
+                            const MAX_DIMENSION = 1200;
                             let { width, height } = img;
 
                             if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
@@ -1248,25 +1265,40 @@
                             const compressedDataUrl = canvasEl.toDataURL('image/jpeg', 0.75);
                             resolve(compressedDataUrl);
                         } catch (canvasErr) {
-                            console.warn('Compression failed, using original file:', canvasErr);
-                            resolve(originalDataUrl);
+                            console.warn('Compression step failed, using original:', canvasErr);
+                            resolve(dataUrl);
                         }
                     };
 
                     img.onerror = () => {
-                        // Couldn't decode for compression (unusual format, etc).
-                        // Send the original file untouched instead of failing.
-                        console.warn('Image decode failed for "' + file.name + '", sending original uncompressed.');
-                        resolve(originalDataUrl);
+                        clearTimeout(timeoutId);
+                        console.warn('Image decode failed for compression, using original uncompressed.');
+                        resolve(dataUrl);
                     };
 
-                    img.src = originalDataUrl;
+                    img.src = dataUrl;
                 } catch (err) {
-                    // Any unexpected error during compression attempt - still send original
-                    console.warn('Unexpected compression error, using original file:', err);
-                    resolve(originalDataUrl);
+                    console.warn('Unexpected error in compression, using original:', err);
+                    resolve(dataUrl);
                 }
             });
+        }
+
+        // Main function used by the submit handler. Returns a base64 data URL,
+        // compressed if possible, original if compression isn't possible,
+        // or null if the file genuinely could not be read at all.
+        async function fileToBase64(file) {
+            const originalDataUrl = await readFileAsDataUrl(file);
+
+            if (!originalDataUrl) {
+                return null; // file could not be read by any method
+            }
+
+            if (!file.type.startsWith('image/')) {
+                return originalDataUrl; // non-images: send as-is, no compression needed
+            }
+
+            return await compressImageDataUrl(originalDataUrl);
         }
 
         // Set today's date as default
