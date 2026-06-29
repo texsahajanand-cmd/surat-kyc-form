@@ -586,8 +586,18 @@
         </div>
 
         <div class="form-content">
-            <div class="alert-box" id="successMsg">
-                <i class="fas fa-check-circle"></i> Form submitted successfully! Your data has been saved securely.
+            <div class="alert-box" id="successMsg" style="display:none; text-align:center; padding: 40px 20px;">
+                <div style="font-size: 60px; color: #4caf50; margin-bottom: 15px;">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <h2 style="color: #2e7d32; margin: 0 0 10px 0;">Form Submitted Successfully!</h2>
+                <p style="color: #555; font-size: 15px; margin: 0 0 20px 0;">
+                    Your KYC details and documents have been saved securely.<br>
+                    A PDF copy has been generated and stored.
+                </p>
+                <button type="button" class="submit-btn" style="min-width: auto; padding: 12px 30px;" onclick="location.reload()">
+                    <i class="fas fa-plus"></i> Submit Another Form
+                </button>
             </div>
             <div class="alert-box error" id="errorMsg"></div>
 
@@ -890,7 +900,7 @@
                     <button type="reset" class="reset-btn">
                         <i class="fas fa-redo"></i> Reset Form
                     </button>
-                    <button type="submit" class="submit-btn">
+                    <button type="submit" class="submit-btn" id="submitBtn">
                         <i class="fas fa-check-circle"></i> Submit Form
                     </button>
                 </div>
@@ -1050,8 +1060,15 @@
         });
 
         // Form submission
+        let isSubmitting = false;
+
         document.getElementById('kycForm').addEventListener('submit', async (e) => {
             e.preventDefault();
+
+            // Prevent double-submission from rapid/multiple taps
+            if (isSubmitting) {
+                return;
+            }
 
             // Check if signature is drawn
             const imageData = canvas.toDataURL('image/png');
@@ -1062,9 +1079,16 @@
                 return;
             }
 
+            isSubmitting = true;
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.style.opacity = '0.6';
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
+
             document.getElementById('loading').style.display = 'block';
             document.getElementById('errorMsg').style.display = 'none';
             document.getElementById('successMsg').style.display = 'none';
+            document.getElementById('loading').scrollIntoView({ behavior: 'smooth', block: 'center' });
 
             try {
                 const formData = new FormData(document.getElementById('kycForm'));
@@ -1095,18 +1119,24 @@
                 const result = JSON.parse(resultText);
 
                 if (result.success) {
+                    // Hide the entire form and show a clear, full success screen
+                    document.getElementById('kycForm').style.display = 'none';
+                    document.getElementById('loading').style.display = 'none';
                     document.getElementById('successMsg').style.display = 'block';
-                    document.getElementById('kycForm').reset();
-                    clearSignature();
-                    setTimeout(() => {
-                        document.getElementById('successMsg').style.display = 'none';
-                    }, 5000);
+                    document.getElementById('successMsg').scrollIntoView({ behavior: 'smooth', block: 'start' });
                 } else {
                     throw new Error(result.error || 'Submission failed');
                 }
             } catch (error) {
-                document.getElementById('errorMsg').innerHTML = '<i class="fas fa-times-circle"></i> Error: ' + error.message;
+                document.getElementById('errorMsg').innerHTML = '<i class="fas fa-times-circle"></i> Error: ' + error.message + '<br><small>Please check your details and try again. If this keeps happening, try smaller/clearer document photos.</small>';
                 document.getElementById('errorMsg').style.display = 'block';
+                document.getElementById('errorMsg').scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                // Re-enable the button so the user can retry
+                isSubmitting = false;
+                submitBtn.disabled = false;
+                submitBtn.style.opacity = '1';
+                submitBtn.innerHTML = '<i class="fas fa-check-circle"></i> Submit Form';
             } finally {
                 document.getElementById('loading').style.display = 'none';
             }
@@ -1114,8 +1144,47 @@
 
         function fileToBase64(file) {
             return new Promise((resolve, reject) => {
+                // Only compress actual images; pass through other file types as-is
+                if (!file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                    return;
+                }
+
                 const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const MAX_DIMENSION = 1200; // max width or height in pixels
+                        let { width, height } = img;
+
+                        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+                            if (width > height) {
+                                height = Math.round(height * (MAX_DIMENSION / width));
+                                width = MAX_DIMENSION;
+                            } else {
+                                width = Math.round(width * (MAX_DIMENSION / height));
+                                height = MAX_DIMENSION;
+                            }
+                        }
+
+                        const canvasEl = document.createElement('canvas');
+                        canvasEl.width = width;
+                        canvasEl.height = height;
+                        const ctx2d = canvasEl.getContext('2d');
+                        ctx2d.fillStyle = '#ffffff';
+                        ctx2d.fillRect(0, 0, width, height);
+                        ctx2d.drawImage(img, 0, 0, width, height);
+
+                        // JPEG at 75% quality keeps file size small while staying readable
+                        const compressedDataUrl = canvasEl.toDataURL('image/jpeg', 0.75);
+                        resolve(compressedDataUrl);
+                    };
+                    img.onerror = reject;
+                    img.src = event.target.result;
+                };
                 reader.onerror = reject;
                 reader.readAsDataURL(file);
             });
