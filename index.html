@@ -1178,44 +1178,62 @@
                 if (!file.type.startsWith('image/')) {
                     const reader = new FileReader();
                     reader.onload = () => resolve(reader.result);
-                    reader.onerror = reject;
+                    reader.onerror = () => reject(new Error('Could not read file "' + file.name + '" (it may be corrupted).'));
                     reader.readAsDataURL(file);
                     return;
                 }
 
                 const reader = new FileReader();
+
                 reader.onload = (event) => {
+                    const originalDataUrl = event.target.result;
                     const img = new Image();
+
                     img.onload = () => {
-                        const MAX_DIMENSION = 1200; // max width or height in pixels
-                        let { width, height } = img;
+                        try {
+                            const MAX_DIMENSION = 1200; // max width or height in pixels
+                            let { width, height } = img;
 
-                        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-                            if (width > height) {
-                                height = Math.round(height * (MAX_DIMENSION / width));
-                                width = MAX_DIMENSION;
-                            } else {
-                                width = Math.round(width * (MAX_DIMENSION / height));
-                                height = MAX_DIMENSION;
+                            if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+                                if (width > height) {
+                                    height = Math.round(height * (MAX_DIMENSION / width));
+                                    width = MAX_DIMENSION;
+                                } else {
+                                    width = Math.round(width * (MAX_DIMENSION / height));
+                                    height = MAX_DIMENSION;
+                                }
                             }
+
+                            const canvasEl = document.createElement('canvas');
+                            canvasEl.width = width;
+                            canvasEl.height = height;
+                            const ctx2d = canvasEl.getContext('2d');
+                            ctx2d.fillStyle = '#ffffff';
+                            ctx2d.fillRect(0, 0, width, height);
+                            ctx2d.drawImage(img, 0, 0, width, height);
+
+                            // JPEG at 75% quality keeps file size small while staying readable
+                            const compressedDataUrl = canvasEl.toDataURL('image/jpeg', 0.75);
+                            resolve(compressedDataUrl);
+                        } catch (canvasErr) {
+                            // Compression failed for some reason - fall back to the original file untouched
+                            console.warn('Compression failed, using original file:', canvasErr);
+                            resolve(originalDataUrl);
                         }
-
-                        const canvasEl = document.createElement('canvas');
-                        canvasEl.width = width;
-                        canvasEl.height = height;
-                        const ctx2d = canvasEl.getContext('2d');
-                        ctx2d.fillStyle = '#ffffff';
-                        ctx2d.fillRect(0, 0, width, height);
-                        ctx2d.drawImage(img, 0, 0, width, height);
-
-                        // JPEG at 75% quality keeps file size small while staying readable
-                        const compressedDataUrl = canvasEl.toDataURL('image/jpeg', 0.75);
-                        resolve(compressedDataUrl);
                     };
-                    img.onerror = reject;
-                    img.src = event.target.result;
+
+                    img.onerror = () => {
+                        // Browser couldn't decode this as a displayable image (e.g. HEIC photo
+                        // from an iPhone, or an unusual format). Fall back to sending the
+                        // original file as-is instead of failing the whole submission.
+                        console.warn('Image decode failed for "' + file.name + '" (type: ' + file.type + '), sending original file uncompressed.');
+                        resolve(originalDataUrl);
+                    };
+
+                    img.src = originalDataUrl;
                 };
-                reader.onerror = reject;
+
+                reader.onerror = () => reject(new Error('Could not read image file "' + file.name + '" (it may be corrupted or in an unsupported format).'));
                 reader.readAsDataURL(file);
             });
         }
